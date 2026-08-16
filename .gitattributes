@@ -1,0 +1,13 @@
+# --- Language statistics ---
+# .jl here is JSON Lines (scraper output), not Julia source. Without this,
+# GitHub reports the repo as ~99% Julia.
+*.jl linguist-detectable=false
+
+# The reference dataset is collected output, not authored code. Marking it
+# generated also collapses it in diffs and pull requests.
+pre_scraped.jl linguist-generated=true
+
+# --- Binary files ---
+# Never attempt line-ending conversion, diffing, or merging on Office documents.
+*.docx binary
+*.pptx binary
