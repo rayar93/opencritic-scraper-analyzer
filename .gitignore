@@ -1,0 +1,44 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+build/
+dist/
+*.egg-info/
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Scraper output ---
+# scraped.jl is appended to on every run, so it changes constantly and would
+# create noisy diffs. pre_scraped.jl is committed on purpose as the reference
+# dataset -- do not add it here.
+scraped.jl
+
+# --- Selenium / WebDriver ---
+geckodriver.log
+chromedriver.log
+*.webdriver
+
+# --- Jupyter / matplotlib scratch ---
+.ipynb_checkpoints/
+
+# --- IDEs and editors ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- OS and OneDrive ---
+.DS_Store
+Thumbs.db
+desktop.ini
+*.lnk
+
+# Microsoft Office lock files (e.g. ~$Final Report.docx)
+~$*
