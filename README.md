@@ -1,4 +1,4 @@
-# OpenCritic Scraper & Analysis
+# OpenCritic Scraper & Analyzer
 
 A Selenium pipeline that scrapes video game review data from [OpenCritic](https://opencritic.com) and carries it end to end through cleaning, exploratory analysis, and linear regression on critic scores.
 
