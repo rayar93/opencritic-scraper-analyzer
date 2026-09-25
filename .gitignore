@@ -42,3 +42,7 @@ desktop.ini
 
 # Microsoft Office lock files (e.g. ~$Final Report.docx)
 ~$*
+
+# --- Generated figures ---
+# finalscraper.py saves its charts here on every run.
+figures/

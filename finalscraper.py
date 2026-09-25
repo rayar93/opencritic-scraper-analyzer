@@ -19,8 +19,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions
 from selenium.webdriver.support.ui import WebDriverWait
 import re
+import argparse
+from pathlib import Path
 import pandas as pd
 import numpy as np
+import matplotlib
 import matplotlib.pyplot as plt
 from collections import Counter
 from sklearn.linear_model import LinearRegression
@@ -29,12 +32,15 @@ from sklearn.model_selection import train_test_split
 USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36"
 URL = "https://opencritic.com"
 HEADERS = {"User-Agent": USER_AGENT}
-JSON_FILE = "scraped.jl"
-ITEM_GOAL = 100
+DEFAULT_ITEMS = 100
+FIGURES_DIR = Path("figures")
+SHOW_FIGURES = False
+figure_count = 0
 
-def scrape():
+def scrape(json_file, item_goal):
     """
     Does scraping setup, navigates webpages and calls index and page scrapers.
+    Appends one JSON line per game to json_file until item_goal games are collected.
     """
 
     # Download and check permissions
@@ -55,7 +61,7 @@ def scrape():
     item_number = 1
     page_number = 1
 
-    while item_number <= ITEM_GOAL:
+    while item_number <= item_goal:
         # Load a page
         driver.get(f"{URL}/browse/all?page={page_number}")
         time.sleep(sleep_time)
@@ -74,11 +80,11 @@ def scrape():
                 # Combine index attributes and item page attributes
                 item.update(game)
                 # Save combined item
-                with open(JSON_FILE, "a", encoding="utf-8") as f:
+                with open(json_file, "a", encoding="utf-8") as f:
                     f.write(json.dumps(item) + "\n")
 
             item_number += 1
-            if item_number > ITEM_GOAL:
+            if item_number > item_goal:
                 break
 
         page_number += 1
@@ -100,14 +106,12 @@ def page_scraper(page, driver, sleep_time):
 
         game_info = driver.find_element(By.CSS_SELECTOR, "body")
 
-        # Extract top critic average and critics recommend
-        rating_orbs = game_info.find_elements(By.CSS_SELECTOR, "div.inner-orb")
-        if rating_orbs:
-            top_critic = rating_orbs[0].text
-            critic_rec = rating_orbs[1].text if len(rating_orbs) > 1 else "N/A"
-        else:
-            top_critic = "N/A"
-            critic_rec = "N/A"
+        # Extract top critic average, critics recommend, and player rating by their labels
+        scores = read_score_orbs(game_info)
+        top_critic = scores.get("Top Critic Average", "N/A")
+        critic_rec = scores.get("Critics Recommend", "N/A")
+        # Below 20 player ratings this orb is labeled differently and shows a count like "3/20", so it stays N/A
+        player_rating = scores.get("Player Rating", "N/A")
 
         # Extract publishers/developers
         creators_elements = game_info.find_elements(By.CSS_SELECTOR, "div.companies *")
@@ -140,6 +144,7 @@ def page_scraper(page, driver, sleep_time):
             "name": game_info.find_element(By.CSS_SELECTOR, "h1").text,
             "top critic average": top_critic,
             "critics recommend": critic_rec,
+            "player rating": player_rating,
             "creators": cleaned_creators,
             "platforms": ", ".join(platforms),
             "url": page,
@@ -151,6 +156,24 @@ def page_scraper(page, driver, sleep_time):
         # Catch errors and print them without crashing the program
         print(f"Error scraping {page}: {e}")
         return None
+
+def read_score_orbs(game_info):
+    """
+    Reads every score orb on a game page and returns {label: value}.
+
+    Which orbs appear varies by game: Critics Recommend is missing when a game has
+    only a few reviews, and there are no orbs at all when there is no score. Reading
+    orbs by position puts the wrong number in the wrong field, so each orb is paired
+    with the <p> label that sits beside it instead.
+    """
+
+    scores = {}
+    for orb in game_info.find_elements(By.CSS_SELECTOR, "app-score-orb"):
+        values = orb.find_elements(By.CSS_SELECTOR, "div.inner-orb")
+        labels = orb.find_elements(By.XPATH, "./following-sibling::p")
+        if values and labels:
+            scores[labels[0].text.strip()] = values[0].text.strip()
+    return scores
 
 def index_scraper(driver):
     """
@@ -189,8 +212,12 @@ def clean(df):
 
     # Turn N/A to NaN
     df_cleaned['top critic average'] = df_cleaned['top critic average'].replace('N/A', np.nan)
-    # Convert to numeric
-    df_cleaned['top critic average'] = pd.to_numeric(df_cleaned['top critic average'])
+    # Convert to numeric (anything non-numeric becomes NaN instead of crashing the run)
+    df_cleaned['top critic average'] = pd.to_numeric(df_cleaned['top critic average'], errors='coerce')
+
+    # Player rating only exists in scrapes made after the label-based orb fix
+    if 'player rating' in df_cleaned.columns:
+        df_cleaned['player rating'] = pd.to_numeric(df_cleaned['player rating'].replace('N/A', np.nan), errors='coerce')
 
     df_cleaned['recommend_pct'] = df_cleaned['critics recommend'].apply(recommend_cleaner)
     df_cleaned = df_cleaned.drop(columns=['critics recommend'])
@@ -230,6 +257,23 @@ def string_to_list(s):
 
     return [item.strip() for item in s.split(",")]
 
+def show_figure():
+    """
+    Saves the current figure to FIGURES_DIR, numbered in the order it was made and named
+    after its title. With --show it also opens in a window (each window blocks until closed).
+    """
+
+    global figure_count
+    figure_count += 1
+    fig = plt.gcf()
+    title = fig.axes[0].get_title() if fig.axes else "figure"
+    slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+    FIGURES_DIR.mkdir(parents=True, exist_ok=True)
+    fig.savefig(FIGURES_DIR / f"{figure_count:02d}-{slug}.png", dpi=120, bbox_inches="tight")
+    if SHOW_FIGURES:
+        plt.show()
+    plt.close(fig)
+
 def explore(df):
     """
     Explores the cleaned data, displaying some graphs and printing some data.
@@ -250,7 +294,7 @@ def explore(df):
     plt.title('Distribution of Scores')
     plt.xlabel('Score')
     plt.ylabel('Count')
-    plt.show()
+    show_figure()
 
     # ----- Creators ------
     # Count unique creators
@@ -287,7 +331,7 @@ def explore(df):
     plt.ylabel('Number of games')
     plt.title('Top 30 creators by number of games')
     plt.xticks(rotation=45, ha='right')
-    plt.show()
+    show_figure()
 
     print_top_creators(top_by_reviews, 'average number of reviews')
 
@@ -296,7 +340,7 @@ def explore(df):
     plt.ylabel('Average number of reviews per game')
     plt.title('Top 30 creators by average number of reviews per game')
     plt.xticks(rotation=45, ha='right')
-    plt.show()
+    show_figure()
 
     # ----- Platforms -----
     # Count unique platforms
@@ -312,7 +356,7 @@ def explore(df):
     plt.xlabel('Platform')
     plt.ylabel('Critic score')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     platform_stats = df_platforms.groupby('platforms').agg(
         count=('name', 'size'),
@@ -342,7 +386,7 @@ def explore(df):
     plt.ylabel('Number of games')
     plt.title('Platforms by number of games')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     print_top_platforms(top_by_score, 'average critic score')
 
@@ -352,7 +396,7 @@ def explore(df):
     plt.ylabel('Average score')
     plt.title('Platforms by average review score')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     print_top_platforms(top_by_reviews, 'average number of reviews')
 
@@ -362,7 +406,7 @@ def explore(df):
     plt.ylabel('Average number of reviews')
     plt.title('Platforms by average number of reviews')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     print_top_platforms(top_by_recommend_pct, 'average percentage of critics who recommend')
 
@@ -372,7 +416,7 @@ def explore(df):
     plt.ylabel('Average recommend percentage')
     plt.title('Platforms by average percentage of critics who recommend')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     # ----- Genres -----
     # Count unique genres
@@ -389,7 +433,7 @@ def explore(df):
     plt.xlabel('Genre')
     plt.ylabel('Critic score')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     genre_stats = df_genres.groupby('genre').agg(
         count=('name', 'size'),
@@ -419,7 +463,7 @@ def explore(df):
     plt.ylabel('Number of games')
     plt.title('Genres by number of games')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     print_top_genres(top_by_score, 'average critic score')
 
@@ -429,7 +473,7 @@ def explore(df):
     plt.ylabel('Average critic score')
     plt.title('Genres by average critic score')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     print_top_genres(top_by_reviews, 'average number of reviews')
 
@@ -439,7 +483,7 @@ def explore(df):
     plt.ylabel('Average number of reviews')
     plt.title('Genres by average number of reviews')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     print_top_genres(top_by_recommend_pct, 'average percentage of critics who recommend')
 
@@ -449,7 +493,7 @@ def explore(df):
     plt.ylabel('Average percentage of critics who recommend')
     plt.title('Genres by average recommend percentage')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     # ----- Number of reviews -----
     print('\nNumber of reviews:')
@@ -462,7 +506,7 @@ def explore(df):
     plt.title('Distribution of average number of reviews')
     plt.xlabel('Number of reviews')
     plt.ylabel('Count')
-    plt.show()
+    show_figure()
 
     # ----- Release dates ------
     print('\nRelease date range:')
@@ -482,7 +526,7 @@ def explore(df):
     plt.xlabel('Release year')
     plt.ylabel('Critic score')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     year_stats = df.groupby('release_year').agg(
         count=('name', 'size'),
@@ -512,7 +556,7 @@ def explore(df):
     plt.ylabel('Number of games')
     plt.title('Number of games each year')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     print_top_years(top_by_score, 'average critic score')
 
@@ -522,7 +566,7 @@ def explore(df):
     plt.ylabel('Average critic score')
     plt.title('Average critic score each year')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     print_top_years(top_by_reviews, 'average number of reviews')
 
@@ -532,7 +576,7 @@ def explore(df):
     plt.ylabel('Average number of reviews')
     plt.title('Average number of reviews each year')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     print_top_years(top_by_recommend_pct, 'average percentage of critics who recommend')
 
@@ -542,10 +586,10 @@ def explore(df):
     plt.ylabel('Average percentage of critics who recommend')
     plt.title('Average recommend percentage each year')
     plt.tight_layout()
-    plt.show()
+    show_figure()
 
     # ----- Recommend percentages ------
-    print('\nCritic recommendation scores, excluding games with <20 reviews:')
+    print('\nCritic recommendation scores, excluding games without a recommend percentage:')
     print('Max:', df['recommend_pct'].max())
     print('Min:', df['recommend_pct'].min())
     print('Median:', df['recommend_pct'].median())
@@ -555,14 +599,14 @@ def explore(df):
     plt.title('Distribution of recommendation scores')
     plt.xlabel('Percent of critics who recommend')
     plt.ylabel('Count')
-    plt.show()
+    show_figure()
 
     # ----- Scatter plot: critic score vs number of reviews -----
     plt.scatter(df['number of reviews'], df['top critic average'], s=6)
     plt.title('Score vs Number of reviews')
     plt.xlabel('Number of reviews')
     plt.ylabel('Score')
-    plt.show()
+    show_figure()
 
 def modeler(df):
     """
@@ -572,7 +616,7 @@ def modeler(df):
     df = df[df['recommend_pct'].notna()].copy() # We want to use this number as an input feature, so drop games without it
     df['release year'] = df['release_date'].dt.year.astype(int)
     print('\nLinear model results: ')
-    print(f"Number of games after dropping those with <20 reviews: {len(df)}")
+    print(f"Number of games after dropping those without a recommend percentage: {len(df)}")
 
     train_df, test_df = train_test_split(df, test_size=0.2, random_state=123)
 
@@ -620,13 +664,42 @@ def modeler(df):
     score = model.score(x_test, y_test)
     print(f"R-squared using release year, number of reviews, and recommend percentage: {score:.2f}")
 
+def parse_args():
+    """
+    Reads command-line options. Run with --help to list them.
+    """
+
+    parser = argparse.ArgumentParser(description="Scrape OpenCritic, then clean, explore, and model the results.")
+    parser.add_argument("--skip-scrape", action="store_true",
+                        help="analyze an existing JSON Lines file instead of scraping (default file: pre_scraped.jl)")
+    parser.add_argument("--data", metavar="PATH",
+                        help="JSON Lines file to write to and analyze (default: scraped.jl, or pre_scraped.jl with --skip-scrape)")
+    parser.add_argument("--items", type=int, default=DEFAULT_ITEMS, metavar="N",
+                        help=f"number of games to scrape (default: {DEFAULT_ITEMS}; the reference dataset used 10000)")
+    parser.add_argument("--figures", default=str(FIGURES_DIR), metavar="DIR",
+                        help=f"folder the figures are saved to (default: {FIGURES_DIR})")
+    parser.add_argument("--show", action="store_true",
+                        help="also open each figure in a window; each one blocks until closed")
+    args = parser.parse_args()
+    if args.data is None:
+        args.data = "pre_scraped.jl" if args.skip_scrape else "scraped.jl"
+    return args
+
 def main():
     """
     Runs the scraper, then the cleaner, then the explorer (graphs and printed data), then the modeler (linear regression).
     """
 
-    scrape()
-    df = pd.read_json(JSON_FILE, lines=True)
+    global FIGURES_DIR, SHOW_FIGURES
+    args = parse_args()
+    FIGURES_DIR = Path(args.figures)
+    SHOW_FIGURES = args.show
+    if not SHOW_FIGURES:
+        matplotlib.use("Agg") # No windows, so the run never stops to wait on one
+
+    if not args.skip_scrape:
+        scrape(args.data, args.items)
+    df = pd.read_json(args.data, lines=True)
     df = clean(df)
     explore(df)
     modeler(df)
