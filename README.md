@@ -1,5 +1,7 @@
 # OpenCritic Scraper & Analyzer
 
+**Try it:** [Run the analysis in Google Colab](https://colab.research.google.com/github/rayar93/opencritic-scraper-analyzer/blob/main/try_it.ipynb) - nothing to install, needs a free Google account.
+
 A Selenium pipeline that scrapes video game review data from [OpenCritic](https://opencritic.com) and carries it end to end through cleaning, exploratory analysis, and linear regression on critic scores.
 
 Solo project - CS 3435 Data Collection and Visualization, Appalachian State University.
@@ -80,6 +82,7 @@ Statistics and model results print to the terminal. Scraping is deliberately rat
 ```
 finalscraper.py      # the full pipeline - scrape, clean, explore, model
 pre_scraped.jl       # reference dataset, 10,421 records in JSON Lines format
+try_it.ipynb         # Colab notebook behind the Try it link - runs the analysis on pre_scraped.jl
 requirements.txt     # Python dependencies
 reports/             # final report and presentation (PDF)
 ```
